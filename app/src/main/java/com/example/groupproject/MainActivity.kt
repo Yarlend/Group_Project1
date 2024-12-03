@@ -36,10 +36,9 @@ class MainActivity : ComponentActivity() {
                     // Экран входа
                     composable("login") {
                         LoginScreen(
-                            onLoginSuccess = { _ ->
-                                // Успешный вход. Переход на главный экран
-                                navController.navigate("home") {
-                                    popUpTo("login") { inclusive = true } // Удаляем экран входа из стека
+                            onLoginSuccess = { userId ->
+                                navController.navigate("home/$userId") {
+                                    popUpTo("login") { inclusive = true }
                                 }
                             }
                         )
@@ -56,9 +55,13 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     // Главный экран
-                    composable("home") {
-                        // Передаем userId для дальнейшего использования (пока захардкожен)
-                        HomeScreen(navController = navController, userId = 1)
+                    composable("home/{userId}") { backStackEntry ->
+                        val userId = backStackEntry.arguments?.getString("userId")?.toIntOrNull()
+                        if (userId != null) {
+                            HomeScreen(navController = navController, userId = userId)
+                        } else {
+                            ErrorScreen()
+                        }
                     }
                     // Экран продуктов пользователя
                     composable("userProducts/{userId}") { backStackEntry ->

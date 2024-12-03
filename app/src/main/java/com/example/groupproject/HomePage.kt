@@ -1,7 +1,6 @@
 package com.example.groupproject
 
 import CookieManager
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,17 +23,20 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 
 @Composable
-fun HomeScreen(navController: NavController, userId: Int?) {
-    var products by remember { mutableStateOf<List<Product>>(emptyList()) }
+fun HomeScreen(navController: NavController, userId: Int) {
+    var products by remember { mutableStateOf<List<Pair<Product, String>>>(emptyList()) }
+    var cart by remember { mutableStateOf<List<CartItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
+    Text(text = "Добро пожаловать, пользователь с ID: $userId")
+
     // Загружаем данные продуктов при старте
     LaunchedEffect(Unit) {
         try {
-            products = fetchProducts()
+            products = fetchProducts()  // Здесь теперь будет возвращаться List<Pair<Product, String>>
         } catch (e: Exception) {
             errorMessage = e.message
         } finally {
@@ -65,7 +67,7 @@ fun HomeScreen(navController: NavController, userId: Int?) {
                     }
                     else -> {
                         LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                            items(products) { product ->
+                            items(products) { (product, unitName) ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -73,26 +75,24 @@ fun HomeScreen(navController: NavController, userId: Int?) {
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "${product.name} - ${product.unit}",
+                                        text = "${product.name} - $unitName",
                                         modifier = Modifier.weight(1f)
                                     )
                                     Button(
                                         onClick = {
-                                            userId?.let { id ->
-                                                scope.launch {
-                                                    try {
-                                                        addProductToPurchases(
-                                                            userId = id,
-                                                            productId = product.id,
-                                                            quantity = 1L // Количество по умолчанию
-                                                        )
-                                                        snackbarHostState.showSnackbar("Продукт успешно добавлен!")
-                                                    } catch (e: Exception) {
-                                                        errorMessage = "Ошибка добавления продукта: ${e.message}"
-                                                    }
+                                            scope.launch {
+                                                try {
+                                                    // Добавляем в корзину локально
+                                                    cart = cart + CartItem(
+                                                        userId = userId,
+                                                        productId = product.id,
+                                                        productName = product.name,
+                                                        quantity = 1 // По умолчанию добавляем 1 единицу
+                                                    )
+                                                    snackbarHostState.showSnackbar("Товар добавлен в корзину")
+                                                } catch (e: Exception) {
+                                                    errorMessage = "Ошибка: ${e.message}"
                                                 }
-                                            } ?: run {
-                                                errorMessage = "Не удалось получить userId"
                                             }
                                         }
                                     ) {
@@ -102,6 +102,17 @@ fun HomeScreen(navController: NavController, userId: Int?) {
                             }
                         }
                     }
+                }
+            }
+
+            // Отображение корзины
+            Text(
+                text = "Корзина (${cart.size} товаров):",
+                style = MaterialTheme.typography.headlineSmall
+            )
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(cart) { cartItem ->
+                    Text(text = "Товар: ${cartItem.productName}, Количество: ${cartItem.quantity}")
                 }
             }
 
@@ -119,10 +130,8 @@ fun HomeScreen(navController: NavController, userId: Int?) {
                     Text("Р")
                 }
                 Button(onClick = {
-                    userId?.let { id ->
+                    userId.let { id ->
                         navController.navigate("userProducts/$id")
-                    } ?: run {
-                        errorMessage = "Не удалось получить userId"
                     }
                 }) {
                     Text("ПП")
@@ -188,7 +197,7 @@ fun addProductToPurchases(userId: Int, productId: Int, quantity: Long) {
     }
 }
 
-suspend fun fetchProducts(): List<Product> {
+suspend fun fetchProducts(): List<Pair<Product, String>> {
     return withContext(Dispatchers.IO) {
         val productResponse = performGetRequest("https://mobileee.pythonanywhere.com/api/product/")
         val unitResponse = performGetRequest("https://mobileee.pythonanywhere.com/api/unit/")
@@ -202,11 +211,13 @@ suspend fun fetchProducts(): List<Product> {
             val unitListType = object : TypeToken<List<Unit1>>() {}.type
             val units: List<Unit1> = gson.fromJson(unitResponse, unitListType)
 
+            // Создаем карту соответствий unit.id -> unit.name
             val unitMap = units.associate { it.id to it.name }
 
+            // Возвращаем список пар (Product, Unit Name)
             return@withContext products.map { product ->
-                product.unit = unitMap[product.unit.toInt()] ?: "Unknown"
-                product
+                val unitName = unitMap[product.unit] ?: "Unknown Unit"
+                Pair(product, unitName) // Связываем продукт с именем юнита
             }
         } else {
             throw Exception("Не удалось загрузить данные с сервера.")
@@ -227,18 +238,15 @@ fun performGetRequest(url: String): String? {
     }
 }
 
-data class Product(val id: Int, val name: String, var unit: String)
-data class Unit1(val id: Int, val name: String)
-data class CartItem(val userId: Int, val productId: Int, val quantity: Int)
-
 @Preview(showBackground = true)
 @Composable
 fun DefaultPreview2() {
     // Создаем временный NavController для превью
     val navController = rememberNavController()
+    val prevUserId = 1
 
     // Отображаем HomeScreen с этим NavController и передаем userId
-    HomeScreen(navController, userId = 1)  // Пример с userId = 1
+    HomeScreen(navController, userId = prevUserId)
 }
 
 fun main() {

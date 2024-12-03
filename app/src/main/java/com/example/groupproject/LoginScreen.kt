@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import getCsrfTokenAndSessionId
 import kotlinx.coroutines.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -91,14 +92,24 @@ private fun loginUser(username: String, password: String, callback: (String, Int
 
 // Основная функция отправки POST-запроса для логина
 fun login(username: String, password: String): Pair<String, Int?> {
-    // URL для отправки запроса
+    val csrfTokenData = getCsrfTokenAndSessionId()
+
+    if (csrfTokenData == null) {
+        println("Ошибка: Не удалось получить CSRF токен и session ID.")
+        return "Ошибка: Не удалось получить CSRF токен." to null
+    }
+
+    val (csrfToken, sessionId) = csrfTokenData
+
     val url = URL("https://mobileee.pythonanywhere.com/api/login/")
     val urlConnection = url.openConnection() as HttpURLConnection
-    urlConnection.requestMethod = "POST" // Метод запроса — POST
-    urlConnection.setRequestProperty("Content-Type", "application/json") // Заголовок запроса
-    urlConnection.doOutput = true // Разрешаем запись данных в тело запроса
+    urlConnection.requestMethod = "POST"
+    urlConnection.setRequestProperty("Content-Type", "application/json")
+    urlConnection.setRequestProperty("X-CSRFTOKEN", csrfToken)
+    urlConnection.setRequestProperty("Cookie", "csrftoken=$csrfToken; sessionid=$sessionId")
+    urlConnection.setRequestProperty("Referer", "https://mobileee.pythonanywhere.com/") // Добавляем Referer
+    urlConnection.doOutput = true
 
-    // Формируем JSON-объект с логином и паролем
     val jsonInputString = """
         {
             "username": "$username",
@@ -107,45 +118,70 @@ fun login(username: String, password: String): Pair<String, Int?> {
     """
 
     return try {
-        // Записываем JSON в тело запроса
         val outputStream: OutputStream = urlConnection.outputStream
         val writer = OutputStreamWriter(outputStream)
         writer.write(jsonInputString)
         writer.flush()
 
-        // Получаем код ответа от сервера
         val responseCode = urlConnection.responseCode
-
-        // Выбираем поток (ответ или ошибка) в зависимости от кода
         val inputStream = if (responseCode == HttpURLConnection.HTTP_OK) {
             urlConnection.inputStream
         } else {
             urlConnection.errorStream
         }
 
-        // Читаем ответ от сервера
         val reader = BufferedReader(InputStreamReader(inputStream))
         val response = StringBuilder()
         reader.forEachLine { response.append(it) }
         reader.close()
 
-        if (responseCode == HttpURLConnection.HTTP_OK) {
-            // Если вход успешен, парсим JSON-ответ
-            val responseText = response.toString().trim()
-            val jsonResponse = JSONObject(responseText)
-            val userId = jsonResponse.optInt("id", -1) // Извлекаем userId из ответа
+        // Извлечение user_id из cookies
+        val cookies = urlConnection.headerFields["Set-Cookie"]
+        val userId = cookies?.find { it.startsWith("user_id=") }
+            ?.substringAfter("user_id=")
+            ?.substringBefore(";")
+            ?.toIntOrNull()
+
+        val responseText = response.toString().trim()
+        println("Response: $responseText")
+
+        // Проверяем, что вход был успешным
+        if (responseText.contains("Login success", ignoreCase = true) && userId != null) {
             "login successful" to userId
         } else {
-            // Если ошибка, возвращаем код и текст ответа
-            "Ошибка: код $responseCode, Ответ: $response" to null
+            "Ошибка: Невозможно выполнить логин" to null
         }
 
     } catch (e: Exception) {
         e.printStackTrace()
-        // В случае ошибки возвращаем ее сообщение
         "Ошибка: ${e.message}" to null
     } finally {
-        // Закрываем соединение
         urlConnection.disconnect()
+    }
+}
+
+fun main() {
+    // Данные для тестирования
+    val testUsername = "user1" // Замените на реальные данные для теста
+    val testPassword = "123" // Замените на реальные данные для теста
+
+    // Запускаем проверку в отдельном потоке
+    runBlocking {
+        withContext(Dispatchers.IO) {
+            try {
+                // Вызываем функцию логина
+                val (response, userId) = login(testUsername, testPassword)
+
+                // Выводим результат в консоль
+                println("Ответ сервера: $response")
+                if (userId != null && userId > 0) {
+                    println("User ID: $userId")
+                } else {
+                    println("Не удалось получить userId")
+                }
+            } catch (e: Exception) {
+                println("Ошибка: ${e.message}")
+            }
+        }
     }
 }
