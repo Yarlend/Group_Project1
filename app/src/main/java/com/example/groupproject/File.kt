@@ -67,3 +67,17 @@ fun getCsrfTokenAndSessionId(): Pair<String, String>? {
         }
     }
 }
+
+fun createLoginRequest(): Request {
+    val jsonInputString = """
+        {
+            "username": "user1",
+            "password": "123"
+        }
+    """
+    val requestBody = jsonInputString.toRequestBody("application/json; charset=utf-8".toMediaType())
+    return Request.Builder()
+        .url("https://mobileee.pythonanywhere.com/api/login/")
+        .post(requestBody)
+        .build()
+}

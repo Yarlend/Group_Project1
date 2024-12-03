@@ -1,6 +1,7 @@
 package com.example.groupproject
 
 import CookieManager
+import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,8 +18,12 @@ import okhttp3.Request
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import androidx.navigation.compose.rememberNavController
+import createLoginRequest
 import getCsrfTokenAndSessionId
 import kotlinx.coroutines.launch
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 
@@ -89,6 +94,10 @@ fun HomeScreen(navController: NavController, userId: Int) {
                                                         productName = product.name,
                                                         quantity = 1 // По умолчанию добавляем 1 единицу
                                                     )
+
+                                                    //addProductToPurchases(userId, product.id, quantity = 1)
+                                                    //addProductToUserProduct(userId, product.id, quantity = 1)
+
                                                     snackbarHostState.showSnackbar("Товар добавлен в корзину")
                                                 } catch (e: Exception) {
                                                     errorMessage = "Ошибка: ${e.message}"
@@ -147,7 +156,74 @@ fun HomeScreen(navController: NavController, userId: Int) {
     }
 }
 
-fun addProductToPurchases(userId: Int, productId: Int, quantity: Long) {
+@SuppressLint("DefaultLocale")
+fun addProductToPurchases(userId: Int, productId: Int, quantity: Int) {
+    val csrfData = getCsrfTokenAndSessionId()
+    if (csrfData != null) {
+        val (csrftoken, sessionid) = csrfData
+
+        try {
+            // Формируем тело запроса
+            val purchase = mapOf(
+                "quantity" to quantity,
+                "user" to userId,
+                "product" to productId
+            )
+
+
+            // Создаем HTTP клиент и выполняем запрос
+            val cookieManager = CookieManager()
+            val client = OkHttpClient.Builder()
+                .cookieJar(cookieManager)  // Используем CookieJar для управления cookie
+                .build()
+
+            // Выполняем логин, чтобы сохранить CSRF cookie
+            val loginRequest = createLoginRequest()
+
+            val json = Gson().toJson(purchase)
+            val requestBody = json.toRequestBody("application/json".toMediaTypeOrNull())
+
+            println("Sending a request with a body: $json") // Лог тела запроса
+
+            client.newCall(loginRequest).execute().use { loginResponse ->
+                if (loginResponse.isSuccessful) {
+                    println("Login successful!")
+                } else {
+                    throw Exception("Login failed with code: ${loginResponse.code}")
+                }
+            }
+
+            val request = Request.Builder()
+                .url("https://mobileee.pythonanywhere.com/api/purchase/")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("X-CSRFTOKEN", csrftoken) // Добавляем CSRF-токен
+                .addHeader("Cookie", "csrftoken=$csrftoken; sessionid=$sessionid") // Добавляем sessionid
+                .addHeader("Referer", "https://mobileee.pythonanywhere.com/") // Добавляем Referer
+                .post(requestBody)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string()
+                println("HTTP Response Code: ${response.code}") // Лог HTTP-кода
+                println("Response Body: $responseBody") // Лог тела ответа
+
+                if (!response.isSuccessful) {
+                    throw Exception("Error when adding a purchase: ${response.message} - $responseBody")
+                } else {
+                    println("Successfully added: $responseBody") // Лог успешного ответа
+                }
+            }
+        } catch (e: Exception) {
+            println("Error adding a product: ${e.message}") // Лог исключения
+            e.printStackTrace() // Для подробного стека вызовов
+        }
+    } else {
+        println("Error: Failed to get CSRF token or session id")
+    }
+}
+
+@SuppressLint("DefaultLocale")
+fun addProductToUserProduct(userId: Int, productId: Int, quantity: Int) {
     val csrfData = getCsrfTokenAndSessionId()
     if (csrfData != null) {
         val (csrftoken, sessionid) = csrfData
@@ -162,38 +238,90 @@ fun addProductToPurchases(userId: Int, productId: Int, quantity: Long) {
             val json = Gson().toJson(purchase)
             val requestBody = json.toRequestBody("application/json".toMediaTypeOrNull())
 
-            println("Отправляем запрос с телом: $json") // Лог тела запроса
+            println("Sending a request with a body: $json") // Лог тела запроса
 
             // Создаем HTTP клиент и выполняем запрос
+            val cookieManager = CookieManager()
             val client = OkHttpClient.Builder()
-                .cookieJar(CookieManager())  // Используем CookieManager для управления cookie
+                .cookieJar(cookieManager)  // Используем CookieJar для управления cookie
                 .build()
 
-            val request = Request.Builder()
-                .url("https://mobileee.pythonanywhere.com/api/purchase/")
+            val loginRequest = createLoginRequest()
+
+            client.newCall(loginRequest).execute().use { loginResponse ->
+                if (loginResponse.isSuccessful) {
+                    println("Login successful!")
+                } else {
+                    throw Exception("Login failed with code: ${loginResponse.code}")
+                }
+            }
+
+            val request11 = Request.Builder()
+                .url("https://mobileee.pythonanywhere.com/api/userproduct/?by_user_id=$userId")  // Интерполяция строки для подстановки userId
+                .addHeader("Content-Type", "application/json")
+                .addHeader("X-CSRFTOKEN", csrftoken)  // Добавляем CSRF-токен
+                .addHeader("Cookie", "csrftoken=$csrftoken; sessionid=$sessionid")  // Добавляем sessionid
+                .addHeader("Referer", "https://mobileee.pythonanywhere.com/") // Добавляем Referer
+                .get()  // GET-запрос
+                .build()
+
+            val response = client.newCall(request11).execute()
+            var userProductId = 0
+            var userProduct: List<UserProduct>
+
+            if (response.isSuccessful) {
+                val responseData = response.body?.string()
+
+                val gson = Gson()
+
+                val userProductListType = object : TypeToken<List<UserProduct>>() {}.type
+
+                userProduct = gson.fromJson(responseData, userProductListType)
+
+                for(value in userProduct)
+                {
+                    if (value.product == productId)
+                    {
+                        userProductId = value.id
+                        break
+                    }
+                }
+
+                // Здесь можно обработать данные (например, распарсить JSON)
+                println("Response Data: $responseData")
+            } else {
+                println("Request failed with code: ${response.code}")
+            }
+
+            val request1 = Request.Builder()
+                .url("https://mobileee.pythonanywhere.com/api/userproduct/$userProductId/")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("X-CSRFTOKEN", csrftoken) // Добавляем CSRF-токен
-                .addHeader("Cookie", "sessionid=$sessionid") // Добавляем sessionid
+                .addHeader("Cookie", "csrftoken=$csrftoken; sessionid=$sessionid") // Добавляем sessionid
                 .post(requestBody)
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            client.newCall(request1).execute().use { response ->
                 val responseBody = response.body?.string()
-                println("HTTP Код ответа: ${response.code}") // Лог HTTP-кода
-                println("Тело ответа: $responseBody") // Лог тела ответа
+                println("HTTP Response Code: ${response.code}") // Лог HTTP-кода
+                println("Response Body: $responseBody") // Лог тела ответа
+
+                //var UserProductEx = UserProduct(id = 1, quantity, userId, productId)
+
+                //var userProducts123 = RetrofitInstance.api.updateProductQuantity(0, UserProductEx)
 
                 if (!response.isSuccessful) {
-                    throw Exception("Ошибка при добавлении покупки: ${response.message} - $responseBody")
+                    throw Exception("Error when adding a purchase: ${response.message} - $responseBody")
                 } else {
-                    println("Успешно добавлено: $responseBody") // Лог успешного ответа
+                    println("Successfully added: $responseBody") // Лог успешного ответа
                 }
             }
         } catch (e: Exception) {
-            println("Ошибка добавления продукта: ${e.message}") // Лог исключения
+            println("Error adding a product: ${e.message}") // Лог исключения
             e.printStackTrace() // Для подробного стека вызовов
         }
     } else {
-        println("Ошибка: Не удалось получить CSRF токен или session id")
+        println("Error: Failed to get CSRF token or session id")
     }
 }
 
@@ -220,7 +348,7 @@ suspend fun fetchProducts(): List<Pair<Product, String>> {
                 Pair(product, unitName) // Связываем продукт с именем юнита
             }
         } else {
-            throw Exception("Не удалось загрузить данные с сервера.")
+            throw Exception("Failed to download data from the server.")
         }
     }
 }
@@ -233,7 +361,7 @@ fun performGetRequest(url: String): String? {
         if (response.isSuccessful) {
             return response.body?.string()
         } else {
-            throw Exception("Ошибка запроса: ${response.code}")
+            throw Exception("Request error: ${response.code}")
         }
     }
 }
@@ -253,7 +381,8 @@ fun main() {
     // Пример вызова для добавления продукта в покупки
     val userId = 1
     val productId = 1
-    val quantity = 1L
+    val quantity = 1
 
-    addProductToPurchases(userId, productId, quantity)
+    //addProductToPurchases(userId, productId, quantity)
+    addProductToUserProduct(userId, productId, quantity)
 }

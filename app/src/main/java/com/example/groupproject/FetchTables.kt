@@ -1,9 +1,15 @@
 package com.example.groupproject
 
+import CookieManager
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import getCsrfTokenAndSessionId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 
 suspend fun fetchProducts1(): List<Product> {
     return withContext(Dispatchers.IO) {
